@@ -45,10 +45,14 @@ public final class ParkingApp {
         String url = args.length > 0 ? args[0]
                 : configuredUrl == null || configuredUrl.isBlank() ? "http://localhost:8080" : configuredUrl;
         ParkingApi api = new ParkingApi(URI.create(url));
-        SwingUtilities.invokeLater(() -> new ParkingApp(api).show(url));
+        String mode = args.length > 1 ? args[1] : "prototype";
+        if (!List.of("prototype", "srs").contains(mode) || args.length > 2) {
+            throw new IllegalArgumentException("실행 인수는 서버 주소와 prototype 또는 srs 모드입니다.");
+        }
+        SwingUtilities.invokeLater(() -> new ParkingApp(api).show(url, mode.equals("prototype")));
     }
 
-    private void show(String url) {
+    private void show(String url, boolean prototype) {
         JFrame frame = new JFrame("주차장 관리 시스템");
         frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
         JPanel root = new JPanel(new BorderLayout(0, 14));
@@ -61,11 +65,17 @@ public final class ParkingApp {
         title.setFont(title.getFont().deriveFont(Font.BOLD, 24));
         title.setForeground(INK);
         header.add(title);
-        header.add(new JLabel("API 서버  " + url));
+        header.add(new JLabel("API 서버  " + url + (prototype ? "  ·  현재 백엔드" : "  ·  작업 명세서 API")));
 
         JTabbedPane menus = new JTabbedPane();
-        menus.addTab("일반 사용자", userTabs());
-        menus.addTab("관리자", adminTabs());
+        if (prototype) {
+            PrototypeParkingApi connected = new PrototypeParkingApi(api);
+            menus.addTab("일반 사용자", prototypeUser(connected));
+            menus.addTab("관리자", prototypeAdmin(connected));
+        } else {
+            menus.addTab("일반 사용자", userTabs());
+            menus.addTab("관리자", adminTabs());
+        }
 
         status.setForeground(INK);
         status.putClientProperty("html.disable", true);
@@ -77,6 +87,61 @@ public final class ParkingApp {
         frame.setSize(960, 620);
         frame.setLocationByPlatform(true);
         frame.setVisible(true);
+    }
+
+    private JPanel prototypeUser(PrototypeParkingApi connected) {
+        JTextField entryPlate = new JTextField(13);
+        JComboBox<VehicleType> vehicleType = new JComboBox<>(VehicleType.values());
+        JTextField exitPlate = new JTextField(13);
+        JTextArea result = output();
+        JButton entry = button("입차 등록", () -> {
+            String plate = Input.plate(entryPlate.getText(), false);
+            VehicleType type = (VehicleType) vehicleType.getSelectedItem();
+            run(() -> connected.enter(plate, type), ticket -> {
+                showText(result, """
+                        입차 등록 완료
+
+                        차량 번호   %s
+                        차종        %s
+                        배정 구역   %s
+                        입차 시각   %s (KST)
+                        """.formatted(PrototypeParkingApi.displayText(ticket.plate()),
+                        ticket.type(), ticket.zone(), time(ticket.entryTime())));
+            }, "입차를 등록했습니다.");
+        });
+        JButton exit = button("출차 정산", () -> {
+            String plate = Input.plate(exitPlate.getText(), false);
+            run(() -> connected.exit(plate), receipt -> showText(result, """
+                    주차 영수증
+
+                    차량 번호   %s
+                    차종        %s
+                    주차 구역   %s
+                    주차 시간   %d분 %d초
+                    최종 요금   %s
+                    """.formatted(PrototypeParkingApi.displayText(receipt.plate()), receipt.type(),
+                    receipt.zone(), receipt.seconds() / 60, receipt.seconds() % 60, won(receipt.fee()))),
+                    "출차를 정산했습니다.");
+        });
+        JPanel forms = new JPanel(new GridLayout(0, 1));
+        forms.add(row(label("입차 차량 번호", entryPlate), entryPlate,
+                label("차종", vehicleType), vehicleType, entry));
+        forms.add(row(label("출차 차량 번호", exitPlate), exitPlate, exit));
+        forms.add(row(new JLabel("현재 서버는 기본 요금 정산을 지원합니다. 정기권·할인은 연동 준비 중입니다.")));
+        return panel(forms, new JScrollPane(result));
+    }
+
+    private JPanel prototypeAdmin(PrototypeParkingApi connected) {
+        Grid zones = new Grid("구역", "주차 중 차량(대)");
+        JButton refresh = button("현황 조회", () -> run(connected::zones, summary -> {
+            zones.clear();
+            zones.add(ZoneType.GENERAL, summary.general());
+            zones.add(ZoneType.LARGE, summary.large());
+            zones.add(ZoneType.EV_CHARGING, summary.evCharging());
+            zones.add("전체", summary.activeCount());
+        }, "구역별 주차 대수를 조회했습니다."));
+        return panel(row(refresh, new JLabel("면별 상태·차량 검색·이용 내역은 연동 준비 중입니다.")),
+                zones.scroll);
     }
 
     private JTabbedPane userTabs() {

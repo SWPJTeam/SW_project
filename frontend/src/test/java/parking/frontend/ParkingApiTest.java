@@ -140,6 +140,40 @@ class ParkingApiTest {
         assertTrue(assertThrows(ParkingApi.ApiException.class, api::zones).getMessage().contains("JSON"));
     }
 
+    @Test
+    void currentBackendUsesQueryParametersAndReturnsZoneCountsAndPlainErrors() throws Exception {
+        PrototypeParkingApi prototype = new PrototypeParkingApi(api);
+        response = new Response(200, """
+                {"plate":"12%EA%B0%803456","type":"EV","zone":"EV_CHARGING","entryTime":"2026-11-28T00:00:00Z"}
+                """);
+        var ticket = prototype.enter("12가3456", VehicleType.EV);
+        assertEquals("12가3456", PrototypeParkingApi.displayText(ticket.plate()));
+        assertEquals(ZoneType.EV_CHARGING, ticket.zone());
+        assertEquals(Map.of("plate", "12가3456", "type", "EV"),
+                query(request("POST", "/api/checkin").uri()));
+
+        response = new Response(400, """
+                {"error":"이미 입차 중인 차량입니다: 12%EA%B0%803456"}
+                """);
+        assertEquals("이미 입차 중인 차량입니다: 12가3456",
+                assertThrows(ParkingApi.ApiException.class,
+                        () -> prototype.enter("12가3456", VehicleType.EV)).getMessage());
+        request("POST", "/api/checkin");
+
+        response = new Response(200, """
+                {"GENERAL":0,"LARGE":0,"EV_CHARGING":1,"activeCount":1}
+                """);
+        assertEquals(1, prototype.zones().evCharging());
+        request("GET", "/api/zones");
+
+        response = new Response(200, """
+                {"plate":"12%EA%B0%803456","type":"EV","zone":"EV_CHARGING","discount":"NONE","seconds":61,"fee":1000}
+                """);
+        assertEquals(1000, prototype.exit("12가3456").fee());
+        assertEquals(Map.of("plate", "12가3456", "discount", "NONE"),
+                query(request("POST", "/api/checkout").uri()));
+    }
+
     private Request request(String method, String path) {
         Request request = requests.remove();
         assertEquals(method, request.method());

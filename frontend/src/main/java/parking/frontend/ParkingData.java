@@ -1,5 +1,7 @@
 package parking.frontend;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+
 import java.util.List;
 
 final class ParkingData {
@@ -48,5 +50,5 @@ final class ParkingData {
     record Spot(String spotId, boolean occupied) {}
     record DailyTotal(String date, int exitCount, long totalFeeWon) {}
     record History(List<Session> sessions, List<DailyTotal> dailyTotals) {}
-    record ErrorBody(String code, String message) {}
+    record ErrorBody(String code, @JsonAlias("error") String message) {}
 }

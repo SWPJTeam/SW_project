@@ -70,6 +70,11 @@ final class ParkingApi {
                 null, 200, type(History.class));
     }
 
+    <T> T prototypeRequest(String path, Map<String, String> parameters, boolean mutation, Class<T> resultType)
+            throws IOException, InterruptedException {
+        return exchange(path + query(parameters), null, mutation, 200, type(resultType));
+    }
+
     private JavaType type(Class<?> valueType) {
         return json.constructType(valueType);
     }
@@ -80,12 +85,19 @@ final class ParkingApi {
 
     private <T> T exchange(String path, Object body, int expectedStatus, JavaType type)
             throws IOException, InterruptedException {
+        return exchange(path, body, body != null, expectedStatus, type);
+    }
+
+    private <T> T exchange(String path, Object body, boolean mutation, int expectedStatus, JavaType type)
+            throws IOException, InterruptedException {
         HttpRequest.Builder request = HttpRequest.newBuilder(baseUrl.resolve(path))
                 .timeout(Duration.ofSeconds(10))
                 .header("Accept", "application/json");
         if (body != null) {
             request.header("Content-Type", "application/json; charset=UTF-8")
                     .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(body)));
+        } else if (mutation) {
+            request.POST(HttpRequest.BodyPublishers.noBody());
         }
         HttpResponse<String> response = client.send(request.build(),
                 HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
@@ -106,9 +118,10 @@ final class ParkingApi {
     private ApiException responseError(HttpResponse<String> response) {
         try {
             ErrorBody error = json.readValue(response.body(), ErrorBody.class);
-            if (error != null && error.code() != null && error.message() != null
+            if (error != null && error.message() != null
                     && !error.message().isBlank()) {
-                return new ApiException(error.message() + " (" + error.code() + ")");
+                String message = error.code() == null ? error.message() : error.message() + " (" + error.code() + ")";
+                return new ApiException(message);
             }
         } catch (JsonProcessingException ignored) {
             // Use the HTTP status when the server returns a non-JSON error page.
